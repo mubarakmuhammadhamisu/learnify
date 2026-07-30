@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ArrowLeft, BookOpen, Users, TrendingUp } from 'lucide-react';
+import { ArrowLeft, BookOpen, Users, TrendingUp, Pencil } from 'lucide-react';
 import { Course, Enrollment } from '@/components/admin/mock-data';
 import { AdminTable, Column } from '@/components/admin/shared/AdminTable';
 
@@ -100,11 +100,14 @@ export default function CourseDetailPage() {
   const completedCount  = courseEnrollments.filter((e) => e.status === 'completed').length;
   const inProgressCount = courseEnrollments.filter((e) => e.status === 'in-progress').length;
 
-   const safePrice = typeof course.price === 'number' && !Number.isNaN(course.price) ? course.price : 0;
+  const safePrice = typeof course.price === 'number' && !Number.isNaN(course.price) ? course.price : 0;
   if (safePrice !== course.price) console.error('[CourseDetailPage] price received a non-numeric value:', course.price);
 
   const safeTotalRevenue = typeof course.totalRevenue === 'number' && !Number.isNaN(course.totalRevenue) ? course.totalRevenue : 0;
   if (safeTotalRevenue !== course.totalRevenue) console.error('[CourseDetailPage] totalRevenue received a non-numeric value:', course.totalRevenue);
+
+  const safePremiumPrice = typeof course.premiumPrice === 'number' && !Number.isNaN(course.premiumPrice) ? course.premiumPrice : 0;
+  if (safePremiumPrice !== course.premiumPrice) console.error('[CourseDetailPage] premiumPrice received a non-numeric value:', course.premiumPrice);
 
   return (
     <div className="space-y-8">
@@ -120,13 +123,21 @@ export default function CourseDetailPage() {
               <h1 className="text-4xl font-bold text-white">{course.title}</h1>
               <p className="mt-2 text-gray-400">{course.description}</p>
             </div>
-            <span className={`inline-block px-4 py-2 rounded-full text-sm font-medium ${
-              course.published
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                : 'bg-gray-700/50 text-gray-400 border border-gray-600'
-            }`}>
-              {course.published ? 'Published' : 'Draft'}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className={`inline-block px-4 py-2 rounded-full text-sm font-medium ${
+                course.published
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-gray-700/50 text-gray-400 border border-gray-600'
+              }`}>
+                {course.published ? 'Published' : 'Draft'}
+              </span>
+              <button
+                onClick={() => router.push(`/admin/courses?edit=${course.id}`)}
+                className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition"
+              >
+                <Pencil size={14} /> Edit
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -134,6 +145,12 @@ export default function CourseDetailPage() {
               <p className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Price</p>
               <p className="mt-2 text-3xl font-bold text-indigo-400">₦{safePrice.toLocaleString()}</p>
             </div>
+            {safePremiumPrice > 0 && (
+              <div className="rounded-xl bg-linear-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 p-5">
+                <p className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Premium Price</p>
+                <p className="mt-2 text-3xl font-bold text-amber-400">₦{safePremiumPrice.toLocaleString()}</p>
+              </div>
+            )}
             <div className="rounded-xl bg-linear-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 p-5">
               <p className="flex items-center gap-2 text-xs uppercase tracking-wider text-gray-500 font-semibold"><Users size={14} />Enrolled</p>
               <p className="mt-2 text-3xl font-bold text-purple-400">{course.enrolledCount}</p>

@@ -5,7 +5,7 @@ import { AdminTable, Column } from '@/components/admin/shared/AdminTable';
 import { FilterBar } from '@/components/admin/shared/FilterBar';
 import { Modal } from '@/components/admin/shared/Modal';
 import { Course } from '@/components/admin/mock-data';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ToggleLeft, ToggleRight, BookOpen, Plus, Trash2,
   ArrowLeft, Save, Eye, EyeOff, GripVertical,
@@ -65,6 +65,7 @@ interface CourseForm {
   instructor: string;
   level: 'Beginner' | 'Intermediate' | 'Advanced';
   price: string;
+  premiumPrice: string;
   published: boolean;
   modules: DraftModule[];
 }
@@ -75,6 +76,7 @@ const BLANK_FORM: CourseForm = {
   instructor: '',
   level: 'Beginner',
   price: '',
+  premiumPrice: '',
   published: false,
   modules: [],
 };
@@ -90,7 +92,9 @@ const inputCls = 'w-full rounded-lg bg-gray-800 border border-indigo-500/20 px-3
 // ── Main component ────────────────────────────────────────────────────────────
 export default function CoursesPage() {
   const router = useRouter();
-  const [pageMode, setPageMode] = useState<'list' | 'create'>('list');
+  const searchParams = useSearchParams();
+  const [pageMode, setPageMode] = useState<'list' | 'create' | 'edit'>('list');
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
 
   // ── List-mode state ───────────────────────────────────────────────────────
   const [courses, setCourses] = useState<Course[]>([]);
@@ -143,6 +147,7 @@ export default function CoursesPage() {
             title:          typeof c?.title === 'string' ? c.title : 'Untitled course',
             description:    typeof c?.description === 'string' ? c.description : '',
             price:          typeof c?.price === 'number' && !Number.isNaN(c.price) ? c.price : 0,
+            premiumPrice:   typeof c?.premiumPrice === 'number' && !Number.isNaN(c.premiumPrice) ? c.premiumPrice : 0,
             enrolledCount:  typeof c?.enrolledCount === 'number' ? c.enrolledCount : 0,
             totalRevenue:   typeof c?.totalRevenue === 'number' ? c.totalRevenue : 0,
             published:      typeof c?.published === 'boolean' ? c.published : false,
@@ -161,6 +166,55 @@ export default function CoursesPage() {
         setLoading(false);
       });
   }, []);
+
+  // ── Enter edit mode from ?edit=<courseId> ───────────────────────────────────
+  // Fetches the FULL course record (including instructor/level/raw modules,
+  // none of which exist on the summary `Course` list shape) from a dedicated
+  // single-course endpoint — deliberately not reusing the already-loaded
+  // `courses` list, since that would silently populate the edit form with
+  // missing instructor/level/modules and wipe them on save.
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId) return;
+
+    console.log('[CoursesPage] Entering edit mode, fetching full record for:', editId);
+    fetch(`/api/admin/courses/${editId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`Request failed with status ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        const c = data?.course;
+        if (!c) {
+          console.error('[CoursesPage] Single-course fetch returned no course:', data);
+          return;
+        }
+        setForm({
+          title:        typeof c.title === 'string' ? c.title : '',
+          description:  typeof c.description === 'string' ? c.description : '',
+          instructor:   typeof c.instructor === 'string' ? c.instructor : '',
+          level:        c.level === 'Intermediate' || c.level === 'Advanced' ? c.level : 'Beginner',
+          price:        typeof c.price === 'number' ? String(c.price) : '',
+          premiumPrice: typeof c.premiumPrice === 'number' && c.premiumPrice > 0 ? String(c.premiumPrice) : '',
+          published:    typeof c.published === 'boolean' ? c.published : false,
+          // Saved modules/lessons never have collapsed/expanded — those are
+          // UI-only flags stripped out before every save (see handleSaveCourse).
+          // Re-add them here with sane defaults so DraftModule/DraftLesson
+          // stay fully-shaped for the editor.
+          modules: (Array.isArray(c.modules) ? c.modules : []).map((m: Omit<DraftModule, 'collapsed'>) => ({
+            ...m,
+            collapsed: false,
+            lessons: (m.lessons ?? []).map((l: Omit<DraftLesson, 'expanded'>) => ({ ...l, expanded: false })),
+          })),
+        });
+        setEditingCourseId(c.id);
+        setPageMode('edit');
+      })
+      .catch((err) => {
+        console.error('[CoursesPage] Failed to load course for editing:', err);
+        setFetchError(err instanceof Error ? err.message : 'Failed to load course for editing.');
+      });
+  }, [searchParams]);
 
   // ── Create-mode state ─────────────────────────────────────────────────────
   const [form, setForm] = useState<CourseForm>(BLANK_FORM);
@@ -353,23 +407,31 @@ export default function CoursesPage() {
     setFormErrors([]);
 
     const parsedPrice = Number(form.price.replace(/[^0-9]/g, '')) || 0;
-    console.log('[CoursesPage] handleSaveCourse: submitting with parsedPrice =', parsedPrice, 'from raw form.price =', form.price);
+    const parsedPremiumPrice = form.premiumPrice.trim()
+      ? Number(form.premiumPrice.replace(/[^0-9]/g, '')) || 0
+      : 0;
+    console.log('[CoursesPage] handleSaveCourse: submitting with parsedPrice =', parsedPrice, 'parsedPremiumPrice =', parsedPremiumPrice, 'from raw form.price =', form.price, 'editingCourseId =', editingCourseId);
+
+    const isEditing = editingCourseId !== null;
+    const cleanModules = form.modules.map(({ collapsed: _c, ...m }) => ({
+      ...m,
+      lessons: m.lessons.map(({ expanded: _e, ...l }) => l),
+    }));
 
     try {
       const res = await fetch('/api/admin/courses', {
-        method: 'POST',
+        method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'x-csrf-protection': '1' },
         body: JSON.stringify({
-          title:       form.title,
-          description: form.description,
-          instructor:  form.instructor,
-          level:       form.level,
-          price:       parsedPrice,
-          published:   form.published,
-          modules:     form.modules.map(({ collapsed: _c, ...m }) => ({
-            ...m,
-            lessons: m.lessons.map(({ expanded: _e, ...l }) => l),
-          })),
+          ...(isEditing ? { courseId: editingCourseId } : {}),
+          title:        form.title,
+          description:  form.description,
+          instructor:   form.instructor,
+          level:        form.level,
+          price:        parsedPrice,
+          premiumPrice: parsedPremiumPrice,
+          published:    form.published,
+          modules:      cleanModules,
         }),
       });
 
@@ -390,16 +452,28 @@ export default function CoursesPage() {
       const saved = responseBody?.course;
       if (!saved || typeof saved.id !== 'string') {
         console.error('[CoursesPage] handleSaveCourse: response missing valid course object:', responseBody);
-        setFormErrors(['Course was created but the response was malformed. Please refresh the page.']);
+        setFormErrors([isEditing
+          ? 'Course was updated but the response was malformed. Please refresh the page.'
+          : 'Course was created but the response was malformed. Please refresh the page.']);
         return;
       }
 
-      setCourses((prev) => [saved, ...prev]);
+      if (isEditing) {
+        // Replace the edited course in place — the PUT response is a partial
+        // shape (no enrolledCount/totalRevenue/lessonsCount), so merge onto
+        // the existing row rather than replacing it wholesale.
+        setCourses((prev) => prev.map((c) => (c.id === saved.id ? { ...c, ...saved } : c)));
+      } else {
+        setCourses((prev) => [saved, ...prev]);
+      }
+
       setSaveSuccess(true);
       setTimeout(() => {
         setSaveSuccess(false);
         setPageMode('list');
         setForm(BLANK_FORM);
+        setEditingCourseId(null);
+        router.replace('/admin/courses');
       }, 1800);
     } catch (err) {
       console.error('[CoursesPage] handleSaveCourse network error:', err);
@@ -418,6 +492,16 @@ export default function CoursesPage() {
           return '₦0';
         }
         return `₦${v.toLocaleString()}`;
+      },
+    },
+    {
+      key: 'premiumPrice', label: 'Premium Price', sortable: true,
+      render: (v) => {
+        if (typeof v !== 'number' || Number.isNaN(v)) {
+          console.error('[CoursesPage] premiumPrice column received a non-numeric value:', v);
+          return '—';
+        }
+        return v > 0 ? `₦${v.toLocaleString()}` : '—';
       },
     },
     { key: 'enrolledCount', label: 'Enrolled', sortable: true },
@@ -456,9 +540,14 @@ export default function CoursesPage() {
     {
       key: 'slug', label: 'Actions',
       render: (_, course) => (
-        <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(course); }} className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg border border-red-500/30 text-red-400 hover:border-red-500/60 hover:bg-red-500/10 transition">
-          <Trash2 size={13} /> Delete
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/courses?edit=${course.id}`); }} className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition">
+            <Pencil size={13} /> Edit
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(course); }} className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg border border-red-500/30 text-red-400 hover:border-red-500/60 hover:bg-red-500/10 transition">
+            <Trash2 size={13} /> Delete
+          </button>
+        </div>
       ),
     },
   ];
@@ -466,12 +555,22 @@ export default function CoursesPage() {
   // ─────────────────────────────────────────────────────────────────────────
   // CREATE MODE
   // ─────────────────────────────────────────────────────────────────────────
-  if (pageMode === 'create') {
+  if (pageMode === 'create' || pageMode === 'edit') {
+    const isEditing = pageMode === 'edit';
     return (
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <button onClick={() => { setPageMode('list'); setForm(BLANK_FORM); setFormErrors([]); }} className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition text-sm">
+          <button
+            onClick={() => {
+              setPageMode('list');
+              setForm(BLANK_FORM);
+              setFormErrors([]);
+              setEditingCourseId(null);
+              router.replace('/admin/courses');
+            }}
+            className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 transition text-sm"
+          >
             <ArrowLeft size={18} /> Back to Courses
           </button>
           <div className="flex items-center gap-3">
@@ -481,8 +580,8 @@ export default function CoursesPage() {
             >
               {form.published ? <><Eye size={14} /> Published</> : <><EyeOff size={14} /> Draft</>}
             </button>
-            <button onClick={handleSaveCourse} className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-medium text-sm transition shadow-lg shadow-indigo-500/30">
-              <Save size={16} /> {form.published ? 'Publish Course' : 'Save Draft'}
+            <button onClick={handleSaveCourse} className="flex items-center gap-2 px-5 py-2 rounded-lg bg-linear-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-medium text-sm transition shadow-lg shadow-indigo-500/30">
+              <Save size={16} /> {isEditing ? 'Save Changes' : (form.published ? 'Publish Course' : 'Save Draft')}
             </button>
           </div>
         </div>
@@ -503,7 +602,7 @@ export default function CoursesPage() {
         )}
 
         {/* ── SECTION 1: Basic Info ── */}
-        <div className="rounded-xl border border-indigo-500/20 bg-gradient-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md space-y-4">
+        <div className="rounded-xl border border-indigo-500/20 bg-linear-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md space-y-4">
           <h2 className="text-lg font-bold text-white">Basic Information</h2>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Course Title *</label>
@@ -531,16 +630,20 @@ export default function CoursesPage() {
             <label className="block text-xs text-gray-400 mb-1.5">Price (₦) *</label>
             <input type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="15000" className={inputCls} />
           </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1.5">Premium Price (₦)</label>
+            <input type="number" value={form.premiumPrice} onChange={e => setForm(f => ({ ...f, premiumPrice: e.target.value }))} placeholder="Optional — leave blank if no premium tier" className={inputCls} />
+          </div>
         </div>
 
         {/* ── SECTION 2: Modules & Lessons ── */}
-        <div className="rounded-xl border border-indigo-500/20 bg-gradient-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md space-y-4">
+        <div className="rounded-xl border border-indigo-500/20 bg-linear-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-bold text-white">Course Content</h2>
               <p className="text-xs text-gray-400 mt-1">{totalLessons} lesson{totalLessons !== 1 ? 's' : ''} total</p>
             </div>
-            <button onClick={addModule} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-sm font-medium transition">
+            <button onClick={addModule} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-linear-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-sm font-medium transition">
               <Plus size={16} /> Add Module
             </button>
           </div>
@@ -794,7 +897,7 @@ export default function CoursesPage() {
         </div>
         <button
           onClick={() => setPageMode('create')}
-          className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-medium text-sm transition shadow-lg shadow-indigo-500/30"
+          className="flex items-center gap-2 px-5 py-2 rounded-lg bg-linear-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-medium text-sm transition shadow-lg shadow-indigo-500/30"
         >
           <Plus size={16} /> New Course
         </button>
@@ -863,10 +966,10 @@ export default function CoursesPage() {
                 <div
                   key={course.id}
                   onClick={() => handleRowClick(course)}
-                  className="group rounded-xl border border-indigo-500/20 bg-gradient-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md cursor-pointer transition-all duration-300 hover:border-indigo-400/60 hover:shadow-lg hover:shadow-indigo-500/20"
+                  className="group rounded-xl border border-indigo-500/20 bg-linear-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md cursor-pointer transition-all duration-300 hover:border-indigo-400/60 hover:shadow-lg hover:shadow-indigo-500/20"
                 >
                   <div className="flex items-start justify-between mb-4">
-                    <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-500/30 to-purple-500/30 flex items-center justify-center border border-indigo-500/30 group-hover:scale-110 transition-transform duration-300">
+                    <div className="h-12 w-12 rounded-lg bg-linear-to-br from-indigo-500/30 to-purple-500/30 flex items-center justify-center border border-indigo-500/30 group-hover:scale-110 transition-transform duration-300">
                       <BookOpen size={24} className="text-indigo-400" />
                     </div>
                     <button
@@ -904,6 +1007,14 @@ export default function CoursesPage() {
                         ₦{typeof course.price === 'number' && !Number.isNaN(course.price) ? course.price.toLocaleString() : '0'}
                       </span>
                     </div>
+                    {typeof course.premiumPrice === 'number' && course.premiumPrice > 0 && (
+                      <div className="flex justify-between items-center p-2 rounded-lg bg-gray-800/30">
+                        <span className="text-gray-400">Premium Price</span>
+                        <span className="font-semibold text-amber-400">
+                          ₦{course.premiumPrice.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center p-2 rounded-lg bg-gray-800/30">
                       <span className="text-gray-400">Revenue</span>
                       <span className="font-semibold text-emerald-400">
@@ -925,7 +1036,7 @@ export default function CoursesPage() {
                       </div>
                       <div className="w-full h-2 rounded-full bg-gray-700">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500"
+                          className="h-full rounded-full bg-linear-to-r from-indigo-500 to-purple-500"
                           style={{ width: `${course.completionRate}%` }}
                         />
                       </div>
@@ -933,12 +1044,18 @@ export default function CoursesPage() {
                   </div>
 
                   {/* Action row — stop propagation so card click (go to detail) doesn't fire */}
-                  <div className="mt-4 pt-4 border-t border-indigo-500/10" onClick={(e) => e.stopPropagation()}>
+                  <div className="mt-4 pt-4 border-t border-indigo-500/10 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => router.push(`/admin/courses?edit=${course.id}`)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition"
+                    >
+                      <Pencil size={13} /> Edit
+                    </button>
                     <button
                       onClick={() => setDeleteTarget(course)}
-                      className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg border border-red-500/30 text-red-400 hover:border-red-500/60 hover:bg-red-500/10 transition"
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg border border-red-500/30 text-red-400 hover:border-red-500/60 hover:bg-red-500/10 transition"
                     >
-                      <Trash2 size={13} /> Delete Course
+                      <Trash2 size={13} /> Delete
                     </button>
                   </div>
                 </div>

@@ -29,6 +29,7 @@ export interface Course {
   title: string;
   description: string;
   price: number;
+  premiumPrice?: number;
   enrolledCount: number;
   totalRevenue: number;
   published: boolean;
