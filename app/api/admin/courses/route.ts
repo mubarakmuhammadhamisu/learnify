@@ -20,7 +20,7 @@ export async function GET() {
   // ── 1. All courses ───────────────────────────────────────────────────────
   const { data: courses, error } = await supabase
     .from('courses')
-    .select('id, slug, title, description, price, is_published, modules')
+    .select('id, slug, title, description, price, premium_price, is_published, modules')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -88,6 +88,7 @@ export async function GET() {
       title:          c.title,
       description:    c.description ?? '',
       price:          parsePrice(c.price),
+      premiumPrice:   parsePrice(c.premium_price),
       enrolledCount:  enrolled,
       totalRevenue:   revenueMap[c.slug] ?? 0,
       published:      c.is_published ?? false,
@@ -116,8 +117,8 @@ export async function POST(req: NextRequest) {
   });
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
-  const { title, description, instructor, level, price, published, modules } = body;
-  console.log('[POST /api/admin/courses] Incoming payload:', { title, instructor, level, price, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array' });
+  const { title, description, instructor, level, price, premiumPrice, published, modules } = body;
+  console.log('[POST /api/admin/courses] Incoming payload:', { title, instructor, level, price, premiumPrice, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array' });
 
   if (!title || !description || !instructor || price === undefined) {
     console.warn('[POST /api/admin/courses] Validation failed — missing required field(s)');
@@ -140,12 +141,13 @@ export async function POST(req: NextRequest) {
       instructor: instructor ?? '',
       level:      level ?? 'Beginner',
       price:      String(price),
+      premium_price: premiumPrice ? String(premiumPrice) : null,
       is_published: published ?? false,
       modules:    modules ?? [],
       features:   [],
       curriculum: [],
     })
-    .select('id, slug, title, description, price, is_published, modules')
+    .select('id, slug, title, description, price, premium_price, is_published, modules')
     .single();
 
   if (error) {
@@ -166,7 +168,8 @@ export async function POST(req: NextRequest) {
       slug:           data.slug,
       title:          data.title,
       description:    data.description ?? '',
-      price:          data.price && !Number.isNaN(Number(data.price)) ? Math.round(Number(data.price)) : 0,
+      price:          parsePrice(data.price),
+      premiumPrice:   parsePrice(data.premium_price),
       enrolledCount:  0,
       totalRevenue:   0,
       published:      data.is_published ?? false,
@@ -174,6 +177,76 @@ export async function POST(req: NextRequest) {
       completionRate: 0,
     },
   }, { status: 201 });
+}
+
+// ── PUT — edit an existing course (full update, slug is immutable) ────────────
+// Body: { courseId, title, description, instructor, level, price, premiumPrice, published, modules }
+// NOTE: slug is intentionally never updated here — payments and enrollments
+// join to courses via course_slug, so changing it would silently disconnect
+// a course from its historical revenue/enrollment data.
+export async function PUT(req: NextRequest) {
+  const csrfError = checkCsrfHeader(req);
+  if (csrfError) return csrfError;
+
+  const admin = await getAuthenticatedAdmin();
+  if (!admin) {
+    console.warn('[PUT /api/admin/courses] Rejected — no authenticated admin');
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const body = await req.json().catch((e) => {
+    console.error('[PUT /api/admin/courses] Failed to parse request body as JSON:', e);
+    return null;
+  });
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+
+  const { courseId, title, description, instructor, level, price, premiumPrice, published, modules } = body;
+  console.log('[PUT /api/admin/courses] Incoming edit:', { courseId, title, instructor, level, price, premiumPrice, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array' });
+
+  if (!courseId || !title || !description || !instructor || price === undefined) {
+    console.warn('[PUT /api/admin/courses] Validation failed — missing required field(s)');
+    return NextResponse.json({ error: 'courseId, title, description, instructor, price are required' }, { status: 400 });
+  }
+
+  const supabase = getAdminClient();
+  const { data, error } = await supabase
+    .from('courses')
+    .update({
+      title,
+      description,
+      instructor:    instructor ?? '',
+      level:         level ?? 'Beginner',
+      price:         String(price),
+      premium_price: premiumPrice ? String(premiumPrice) : null,
+      is_published:  published ?? false,
+      modules:       modules ?? [],
+    })
+    .eq('id', courseId)
+    .select('id, slug, title, description, price, premium_price, is_published, modules')
+    .single();
+
+  if (error) {
+    console.error('[PUT /api/admin/courses] Supabase update error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!data) {
+    console.error('[PUT /api/admin/courses] Update succeeded but no data returned — courseId may not exist:', courseId);
+    return NextResponse.json({ error: 'Course not found' }, { status: 404 });
+  }
+
+  console.log('[PUT /api/admin/courses] Course updated successfully:', data.id, data.slug);
+
+  return NextResponse.json({
+    course: {
+      id:             data.id,
+      slug:           data.slug,
+      title:          data.title,
+      description:    data.description ?? '',
+      price:          parsePrice(data.price),
+      premiumPrice:   parsePrice(data.premium_price),
+      published:      data.is_published ?? false,
+    },
+  });
 }
 
 // ── PATCH — toggle is_published for a course ──────────────────────────────────
