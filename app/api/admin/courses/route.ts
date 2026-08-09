@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getAuthenticatedAdmin } from '@/lib/adminSupabase';
 import { checkCsrfHeader } from '@/lib/csrf';
 import { parsePrice } from '@/lib/parsePrice';
+import { generateCourseId } from '@/lib/generateCourseId';
 
 export async function GET() {
   const admin = await getAuthenticatedAdmin();
@@ -132,9 +133,12 @@ export async function POST(req: NextRequest) {
     + '-' + Date.now();
 
   const supabase = getAdminClient();
+  const courseId = await generateCourseId(supabase, title);
+
   const { data, error } = await supabase
     .from('courses')
     .insert({
+      id:         courseId,
       slug,
       title,
       description,
