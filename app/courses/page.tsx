@@ -4,6 +4,10 @@ import Navbar from '@/components/ui/Navbar';
 import Footer from '@/components/ui/Footer';
 import { getAllCourses } from '@/lib/courses';
 
+// Same reasoning as app/page.tsx — without this, newly published courses
+// won't appear here until the next deploy.
+export const revalidate = 172800; // 2 days, 48 hours, in seconds
+
 export default async function CoursesPage() {
   const courses = await getAllCourses();
 

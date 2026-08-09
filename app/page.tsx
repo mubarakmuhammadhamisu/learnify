@@ -5,6 +5,14 @@ import Navbar from "@/components/ui/Navbar";
 import Footer from "@/components/ui/Footer";
 import CoursePreview from "@/components/ui/CoursePreview";
 
+// Without this, Next.js statically prerenders this page once at build/deploy
+// time and serves that frozen snapshot to every visitor afterward — so
+// courses published in Supabase after the last deploy never show up here,
+// even though they show up fine everywhere else (dashboard fetches
+// client-side, which is always fresh). Revalidating once a day keeps this
+// page self-healing without re-querying on every single request.
+export const revalidate = 86400; // 24 hours, in seconds
+
 export const metadata: Metadata = {
   title: 'TITECX — Learn Real-World Tech Skills',
   description: 'High-quality courses built for Nigerian learners. Master in-demand tech skills and get certified.',
