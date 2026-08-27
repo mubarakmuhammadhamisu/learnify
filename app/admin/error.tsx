@@ -22,7 +22,7 @@ export default function AdminError({
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
       <div className="max-w-md w-full rounded-xl border border-red-500/30 bg-red-500/10 p-6 space-y-4 text-center">
         <AlertTriangle size={36} className="mx-auto text-red-400" />
-        <h2 className="text-lg font-bold text-white">Something went wrong</h2>
+        <h1 className="text-lg font-bold text-white">Something went wrong</h1>
         <p className="text-sm text-gray-300">{error.message || 'An unexpected error occurred while rendering this page.'}</p>
         {error.digest && (
           <p className="text-xs text-gray-500">Error reference: {error.digest}</p>
