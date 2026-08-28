@@ -8,6 +8,7 @@ import { getAdminClient, getAuthenticatedAdmin } from '@/lib/adminSupabase';
 import { checkCsrfHeader } from '@/lib/csrf';
 import { parsePrice } from '@/lib/parsePrice';
 import { generateCourseId } from '@/lib/generateCourseId';
+import { randomGradient } from '@/lib/randomGradient';
 
 export async function GET() {
   const admin = await getAuthenticatedAdmin();
@@ -118,8 +119,8 @@ export async function POST(req: NextRequest) {
   });
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
-  const { title, description, instructor, level, price, premiumPrice, published, modules } = body;
-  console.log('[POST /api/admin/courses] Incoming payload:', { title, instructor, level, price, premiumPrice, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array' });
+  const { title, description, shortDescription, instructor, level, price, premiumPrice, duration, thumbnail, features, curriculum, published, modules } = body;
+  console.log('[POST /api/admin/courses] Incoming payload:', { title, instructor, level, price, premiumPrice, duration, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array', featureCount: Array.isArray(features) ? features.length : 0, curriculumCount: Array.isArray(curriculum) ? curriculum.length : 0 });
 
   if (!title || !description || !instructor || price === undefined) {
     console.warn('[POST /api/admin/courses] Validation failed — missing required field(s)');
@@ -134,6 +135,7 @@ export async function POST(req: NextRequest) {
 
   const supabase = getAdminClient();
   const courseId = await generateCourseId(supabase, title);
+  const { gradientFrom, gradientTo } = randomGradient();
 
   const { data, error } = await supabase
     .from('courses')
@@ -142,16 +144,21 @@ export async function POST(req: NextRequest) {
       slug,
       title,
       description,
+      short_description: shortDescription ?? '',
       instructor: instructor ?? '',
       level:      level ?? 'Beginner',
+      duration:   duration ?? '',
+      thumbnail:  thumbnail ?? '',
+      gradient_from: gradientFrom,
+      gradient_to:   gradientTo,
       price:      String(price),
       premium_price: premiumPrice ? String(premiumPrice) : null,
       is_published: published ?? false,
       modules:    modules ?? [],
-      features:   [],
-      curriculum: [],
+      features:   Array.isArray(features) ? features : [],
+      curriculum: Array.isArray(curriculum) ? curriculum : [],
     })
-    .select('id, slug, title, description, price, premium_price, is_published, modules')
+    .select('id, slug, title, description, short_description, duration, thumbnail, gradient_from, gradient_to, price, premium_price, is_published, modules, features, curriculum')
     .single();
 
   if (error) {
@@ -172,8 +179,15 @@ export async function POST(req: NextRequest) {
       slug:           data.slug,
       title:          data.title,
       description:    data.description ?? '',
+      shortDescription: data.short_description ?? '',
+      duration:       data.duration ?? '',
+      thumbnail:      data.thumbnail ?? '',
+      gradientFrom:   data.gradient_from ?? '',
+      gradientTo:     data.gradient_to ?? '',
       price:          parsePrice(data.price),
       premiumPrice:   parsePrice(data.premium_price),
+      features:       Array.isArray(data.features) ? data.features : [],
+      curriculum:     Array.isArray(data.curriculum) ? data.curriculum : [],
       enrolledCount:  0,
       totalRevenue:   0,
       published:      data.is_published ?? false,
@@ -204,8 +218,8 @@ export async function PUT(req: NextRequest) {
   });
   if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
-  const { courseId, title, description, instructor, level, price, premiumPrice, published, modules } = body;
-  console.log('[PUT /api/admin/courses] Incoming edit:', { courseId, title, instructor, level, price, premiumPrice, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array' });
+  const { courseId, title, description, shortDescription, instructor, level, price, premiumPrice, duration, thumbnail, features, curriculum, published, modules } = body;
+  console.log('[PUT /api/admin/courses] Incoming edit:', { courseId, title, instructor, level, price, premiumPrice, duration, published, moduleCount: Array.isArray(modules) ? modules.length : 'not an array', featureCount: Array.isArray(features) ? features.length : 0, curriculumCount: Array.isArray(curriculum) ? curriculum.length : 0 });
 
   if (!courseId || !title || !description || !instructor || price === undefined) {
     console.warn('[PUT /api/admin/courses] Validation failed — missing required field(s)');
@@ -218,15 +232,22 @@ export async function PUT(req: NextRequest) {
     .update({
       title,
       description,
+      short_description: shortDescription ?? '',
       instructor:    instructor ?? '',
       level:         level ?? 'Beginner',
+      duration:      duration ?? '',
+      thumbnail:     thumbnail ?? '',
+      // gradient_from / gradient_to deliberately omitted — set once at
+      // creation only (see lib/randomGradient.ts), never overwritten on edit.
       price:         String(price),
       premium_price: premiumPrice ? String(premiumPrice) : null,
       is_published:  published ?? false,
       modules:       modules ?? [],
+      features:      Array.isArray(features) ? features : [],
+      curriculum:    Array.isArray(curriculum) ? curriculum : [],
     })
     .eq('id', courseId)
-    .select('id, slug, title, description, price, premium_price, is_published, modules')
+    .select('id, slug, title, description, short_description, duration, thumbnail, price, premium_price, is_published, modules, features, curriculum')
     .single();
 
   if (error) {
@@ -246,8 +267,13 @@ export async function PUT(req: NextRequest) {
       slug:           data.slug,
       title:          data.title,
       description:    data.description ?? '',
+      shortDescription: data.short_description ?? '',
+      duration:       data.duration ?? '',
+      thumbnail:      data.thumbnail ?? '',
       price:          parsePrice(data.price),
       premiumPrice:   parsePrice(data.premium_price),
+      features:       Array.isArray(data.features) ? data.features : [],
+      curriculum:     Array.isArray(data.curriculum) ? data.curriculum : [],
       published:      data.is_published ?? false,
     },
   });

@@ -62,10 +62,15 @@ interface DraftModule {
 interface CourseForm {
   title: string;
   description: string;
+  shortDescription: string;
   instructor: string;
   level: 'Beginner' | 'Intermediate' | 'Advanced';
   price: string;
   premiumPrice: string;
+  duration: string;
+  thumbnail: string;
+  features: string[];
+  curriculum: string[];
   published: boolean;
   modules: DraftModule[];
 }
@@ -73,10 +78,15 @@ interface CourseForm {
 const BLANK_FORM: CourseForm = {
   title: '',
   description: '',
+  shortDescription: '',
   instructor: '',
   level: 'Beginner',
   price: '',
   premiumPrice: '',
+  duration: '',
+  thumbnail: '',
+  features: [],
+  curriculum: [],
   published: false,
   modules: [],
 };
@@ -85,6 +95,64 @@ function defaultContent(type: LessonType): VideoContent | ReadingContent | QuizC
   if (type === 'video')   return { videoUrl: '', duration: '', videoProvider: 'youtube' };
   if (type === 'reading') return { markdownBody: '' };
   return { questions: [{ id: `q-${Date.now()}`, question: '', options: ['', '', '', ''], correctAnswer: 0, points: 10 }] };
+}
+
+// Small reusable editor for flat string-array fields (features, curriculum).
+// Both are stored as plain jsonb string arrays in Supabase — no nested shape.
+function TagListEditor({
+  label, placeholder, items, onChange,
+}: {
+  label: string;
+  placeholder: string;
+  items: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addItem = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onChange([...items, trimmed]);
+    setDraft('');
+  };
+
+  const removeItem = (index: number) => {
+    onChange(items.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div>
+      <label className="block text-xs text-gray-400 mb-1.5">{label} <span className="text-gray-600">(optional)</span></label>
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+          placeholder={placeholder}
+          className={inputCls}
+        />
+        <button
+          type="button"
+          onClick={addItem}
+          className="shrink-0 flex items-center gap-1 px-4 rounded-lg border border-indigo-500/30 text-indigo-400 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition text-sm"
+        >
+          <Plus size={14} /> Add
+        </button>
+      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {items.map((item, i) => (
+            <span key={`${item}-${i}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-800 border border-gray-700 text-xs text-gray-200">
+              {item}
+              <button type="button" onClick={() => removeItem(i)} className="text-gray-500 hover:text-red-400 transition">
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const inputCls = 'w-full rounded-lg bg-gray-800 border border-indigo-500/20 px-3 py-2.5 text-white placeholder:text-gray-500 outline-none focus:border-indigo-500/60 transition text-sm';
@@ -192,10 +260,15 @@ export default function CoursesPage() {
         setForm({
           title:        typeof c.title === 'string' ? c.title : '',
           description:  typeof c.description === 'string' ? c.description : '',
+          shortDescription: typeof c.shortDescription === 'string' ? c.shortDescription : '',
           instructor:   typeof c.instructor === 'string' ? c.instructor : '',
           level:        c.level === 'Intermediate' || c.level === 'Advanced' ? c.level : 'Beginner',
           price:        typeof c.price === 'number' ? String(c.price) : '',
           premiumPrice: typeof c.premiumPrice === 'number' && c.premiumPrice > 0 ? String(c.premiumPrice) : '',
+          duration:     typeof c.duration === 'string' ? c.duration : '',
+          thumbnail:    typeof c.thumbnail === 'string' ? c.thumbnail : '',
+          features:     Array.isArray(c.features) ? c.features.filter((f: unknown) => typeof f === 'string') : [],
+          curriculum:   Array.isArray(c.curriculum) ? c.curriculum.filter((t: unknown) => typeof t === 'string') : [],
           published:    typeof c.published === 'boolean' ? c.published : false,
           // Saved modules/lessons never have collapsed/expanded — those are
           // UI-only flags stripped out before every save (see handleSaveCourse).
@@ -424,14 +497,19 @@ export default function CoursesPage() {
         headers: { 'Content-Type': 'application/json', 'x-csrf-protection': '1' },
         body: JSON.stringify({
           ...(isEditing ? { courseId: editingCourseId } : {}),
-          title:        form.title,
-          description:  form.description,
-          instructor:   form.instructor,
-          level:        form.level,
-          price:        parsedPrice,
-          premiumPrice: parsedPremiumPrice,
-          published:    form.published,
-          modules:      cleanModules,
+          title:            form.title,
+          description:      form.description,
+          shortDescription: form.shortDescription,
+          instructor:       form.instructor,
+          level:            form.level,
+          price:            parsedPrice,
+          premiumPrice:     parsedPremiumPrice,
+          duration:         form.duration,
+          thumbnail:        form.thumbnail,
+          features:         form.features,
+          curriculum:       form.curriculum,
+          published:        form.published,
+          modules:          cleanModules,
         }),
       });
 
@@ -612,6 +690,10 @@ export default function CoursesPage() {
             <label className="block text-xs text-gray-400 mb-1.5">Description *</label>
             <textarea rows={4} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Describe what students will learn..." className={inputCls} />
           </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1.5">Short Description</label>
+            <input value={form.shortDescription} onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))} placeholder="One-line summary shown on course cards" className={inputCls} />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-gray-400 mb-1.5">Instructor *</label>
@@ -634,6 +716,33 @@ export default function CoursesPage() {
             <label className="block text-xs text-gray-400 mb-1.5">Premium Price (₦)</label>
             <input type="number" value={form.premiumPrice} onChange={e => setForm(f => ({ ...f, premiumPrice: e.target.value }))} placeholder="Optional — leave blank if no premium tier" className={inputCls} />
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5">Duration</label>
+              <input value={form.duration} onChange={e => setForm(f => ({ ...f, duration: e.target.value }))} placeholder="e.g. 24 hours" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5">Thumbnail URL</label>
+              <input value={form.thumbnail} onChange={e => setForm(f => ({ ...f, thumbnail: e.target.value }))} placeholder="https://..." className={inputCls} />
+            </div>
+          </div>
+        </div>
+
+        {/* ── SECTION 1b: Features & Curriculum ── */}
+        <div className="rounded-xl border border-indigo-500/20 bg-linear-to-br from-gray-900/80 to-gray-800/40 p-6 backdrop-blur-md space-y-5">
+          <h2 className="text-lg font-bold text-white">Highlights</h2>
+          <TagListEditor
+            label="Features"
+            placeholder="e.g. Hands-on projects"
+            items={form.features}
+            onChange={(next) => setForm(f => ({ ...f, features: next }))}
+          />
+          <TagListEditor
+            label="Curriculum Topics"
+            placeholder="e.g. Introduction to Hooks"
+            items={form.curriculum}
+            onChange={(next) => setForm(f => ({ ...f, curriculum: next }))}
+          />
         </div>
 
         {/* ── SECTION 2: Modules & Lessons ── */}
