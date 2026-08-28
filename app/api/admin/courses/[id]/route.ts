@@ -32,7 +32,7 @@ export async function GET(
   const supabase = getAdminClient();
   const { data, error } = await supabase
     .from('courses')
-    .select('id, slug, title, description, instructor, level, price, premium_price, is_published, modules')
+    .select('id, slug, title, description, short_description, instructor, level, duration, thumbnail, price, premium_price, is_published, modules, features, curriculum')
     .eq('id', id)
     .single();
 
@@ -50,12 +50,17 @@ export async function GET(
       slug:         data.slug,
       title:        data.title,
       description:  data.description ?? '',
+      shortDescription: data.short_description ?? '',
       instructor:   data.instructor ?? '',
       level:        data.level ?? 'Beginner',
+      duration:     data.duration ?? '',
+      thumbnail:    data.thumbnail ?? '',
       price:        parsePrice(data.price),
       premiumPrice: parsePrice(data.premium_price),
       published:    data.is_published ?? false,
       modules:      Array.isArray(data.modules) ? data.modules : [],
+      features:     Array.isArray(data.features) ? data.features : [],
+      curriculum:   Array.isArray(data.curriculum) ? data.curriculum : [],
     },
   });
 }
